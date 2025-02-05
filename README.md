@@ -1,30 +1,28 @@
-# Docker container for ORB-SLAM3
-Clone this repository
-```
-git clone https://github.com/suliemanda/ORB_SLAM3_docker.git ORB_SLAM3_docker
-```
-Clone ORB_SLAM3 repository:
-```
-cd ORB_SLAM3_docker
-git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git ORB_SLAM3
-```
-Pull ubuntu:22.04 docker image
-```
-docker pull ubuntu:22.04
-```
-Build docker container
-```
-docker build -t ORB_SLAM3_docker . --build-arg NUM_THREADS=$(nproc)
-```
-To run the container run the file run_docker.bash
-```
-chmod +x run_docker.bash
-./run_docker.bash
-```
-Inside container run build_orbslam3.bash
-```
-chmod +x 
+# ORB-SLAM3 with SuperPoint, SuperGlue, and Panorama Camera Support  
+
+This repository extends ORB-SLAM3 by:  
+- Replacing ORB features with **SuperPoint** for feature extraction.  
+- Using **SuperGlue** for feature matching.  
+- Adding support for **panorama (equirectangular) cameras**.  
+
+## Features  
+- Improved feature extraction and matching with deep learning-based methods.  
+- Enhanced performance in challenging environments where ORB features struggle.  
+- Support for wide-angle and 360° images using an equirectangular camera model.  
+- **Dockerized setup** for easy installation and reproducibility.  
+
+## Installation & Setup  
+1. Build the Docker image:  
+   ```bash
+   docker build -t ORB_SLAM3_docker . --build-arg NUM_THREADS=$(nproc)
+   ```
+2. Run the container:  
+   ```bash
+   ./run_docker.sh
+   ```
+   This will start the SLAM system inside a container with all dependencies installed.  
+3. Build the package:
+```bash
 ./build_orbslam3.bash
 ```
-
 
