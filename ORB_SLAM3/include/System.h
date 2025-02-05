@@ -39,6 +39,7 @@
 #include "Viewer.h"
 #include "ImuTypes.h"
 #include "Settings.h"
+#include "SPmatcher.h"
 
 
 namespace ORB_SLAM3
@@ -185,6 +186,8 @@ public:
     void ChangeDataset();
 
     float GetImageScale();
+    //SPmathcer
+    SPmatcher* mpSPmatcher;
 
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
@@ -262,6 +265,7 @@ private:
     string mStrVocabularyFilePath;
 
     Settings* settings_;
+
 };
 
 }// namespace ORB_SLAM

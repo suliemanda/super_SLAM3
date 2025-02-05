@@ -33,8 +33,8 @@ Camera1.p2: 1.76187114e-05
 Camera.width: 752
 Camera.height: 480
 
-Camera.newWidth: 600
-Camera.newHeight: 350
+Camera.newWidth: 752
+Camera.newHeight: 480
 
 # Camera frames per second 
 Camera.fps: 20
@@ -47,7 +47,7 @@ Camera.RGB: 1
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 1000
+ORBextractor.nFeatures: 500
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
@@ -59,8 +59,9 @@ ORBextractor.nLevels: 1
 # Image is divided in a grid. At each cell FAST are extracted imposing a minimum response.
 # Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
 # You can lower these values if your images have low contrast			
-ORBextractor.iniThFAST: 15
-ORBextractor.minThFAST: 3
+ORBextractor.iniThFAST: 50
+ORBextractor.minThFAST: 50
+Weights: "weights/"
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters

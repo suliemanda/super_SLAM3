@@ -26,6 +26,7 @@
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
 #include "Settings.h"
+#include "SPmatcher.h"
 
 #include <mutex>
 
@@ -191,9 +192,11 @@ protected:
     float mTinit;
 
     int countRefinement;
+    SPmatcher* matcher;
 
     //DEBUG
     ofstream f_lm;
+
 
     };
 

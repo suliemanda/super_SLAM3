@@ -22,10 +22,11 @@
 
 #include <opencv2/core/core.hpp>
 
-#include "Thirdparty/DBoW2/DBoW2/FeatureVector.h"
+// #include "Thirdparty/DBoW2/DBoW2/FeatureVector.h"
 
 #include <stdint-gcc.h>
-#include "point_matching.h"
+#include "super_glue.h"
+// #include "point_matching.h"
 #include "read_config.h"
 
 using namespace std;
@@ -37,37 +38,77 @@ namespace ORB_SLAM3
     const int SPmatcher::TH_LOW = 50;
     const int SPmatcher::HISTO_LENGTH = 30;
 
-    SPmatcher::SPmatcher(float nnratio, bool checkOri) : mfNNratio(nnratio), mbCheckOrientation(checkOri)
+    SPmatcher::SPmatcher(float nnratio, bool checkOri,int w,int h,std::string dir) : mfNNratio(nnratio), mbCheckOrientation(checkOri),im_w(w),im_h(h),dir_(dir)
     {
+
         SuperGlueConfig superglue_config;
-        superglue_config.image_width = 640;
-        superglue_config.image_height = 480;
-        superglue_config.dla_core = 0;
+        superglue_config.image_width = w;
+        superglue_config.image_height = h;
+        superglue_config.dla_core = -1;
         superglue_config.input_tensor_names = {"keypoints_0", "scores_0", "descriptors_0", "keypoints_1", "scores_1", "descriptors_1"};
         superglue_config.output_tensor_names = {"scores"};
-        superglue_config.onnx_file = "weights/superglue_indoor_sim_int32.onnx";
-        superglue_config.onnx_file = "weights/superglue_indoor_sim_int32.engine";
+        superglue_config.onnx_file =dir_+"superglue_indoor_sim_int32.onnx";
+        superglue_config.engine_file =dir_+"superglue_indoor_sim_int32.engine";
 
-        PointMatchingPtr point_matcher = std::make_shared<PointMatching>(superglue_config);
+        this->matcher = std::make_shared<SuperGlue>(SuperGlue(superglue_config));
+
+        if (!this->matcher->build())
+        {
+            std::cout << "Error in SuperGlue building" << std::endl;
+            exit(0);
+        }
+    }
+    std::vector<size_t> sort_indexes(std::vector<float> &data)
+    {
+        std::vector<size_t> indexes(data.size());
+        iota(indexes.begin(), indexes.end(), 0);
+        sort(indexes.begin(), indexes.end(),
+             [&data](size_t i1, size_t i2)
+             { return data[i1] > data[i2]; });
+        return indexes;
     }
 
     int SPmatcher::SearchByProjection(Frame &F, const vector<MapPoint *> &vpMapPoints, const float th, const bool bFarPoints, const float thFarPoints)
     {
-        // TODO: Project MapPoints
         int nmatches = 0, left = 0, right = 0;
+        int j = 0;
 
         const bool bFactor = th != 1.0;
-        std::vector<cv::KeyPoint> &kp1 = F.mvKeysUn;
+        std::vector<cv::KeyPoint> kp1 = F.mvKeysUn;
         std::vector<cv::KeyPoint> kp2;
         std::vector<cv::DMatch> matches;
-        std::vector<float> &scores1 = F.scores;
+        std::vector<float> scores1 = F.scores;
+        std::vector<size_t> indexes1 = sort_indexes(scores1);
         std::vector<float> scores2;
-        cv::Mat &descriptors1 = F.mDescriptors;
+        cv::Mat descriptors1 = F.mDescriptors;
         cv::Mat descriptors2;
-        Sophus::Sim3f &Scw = F.mTcw;
-        Sophus::SE3f Tcw = Sophus::SE3f(Scw.rotationMatrix(), Scw.translation() / Scw.scale());
+        vector<MapPoint *> MapPoints_to_match;
+        descriptors2.create(vpMapPoints.size(), F.mDescriptors.cols, CV_32F);
+        // get the top 2000 score points
+        float th_score1 = 0;
+        if (scores1.size() > 2000)
+            th_score1 = scores1[indexes1[2000]];
+
+        // Sophus::Sim3f Scw =
+        Sophus::SE3f Tcw = F.GetPose();
+        std::vector<float> scores2f;
         for (size_t iMP = 0; iMP < vpMapPoints.size(); iMP++)
         {
+            MapPoint *pMP = vpMapPoints[iMP];
+
+            scores2f.push_back(pMP->desc_score);
+
+        }
+        float th_score2 = 0;
+        std::vector<size_t> indexes2 = sort_indexes(scores2f);
+
+        if (scores2f.size() > 2000)
+        {
+            th_score2 = scores2f[indexes2[2000]];
+        }
+        for (size_t iMP = 0; iMP < vpMapPoints.size(); iMP++)
+        {
+
             MapPoint *pMP = vpMapPoints[iMP];
             Eigen::Vector3f p3Dw = pMP->GetWorldPos();
 
@@ -75,14 +116,26 @@ namespace ORB_SLAM3
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
             auto uv = F.mpCamera->project(p3Dc);
             auto kp = cv::KeyPoint(uv(0), uv(1), 1);
+
+            // check if inside the frame
+            if (uv(0) < 0 || uv(0) > im_w || uv(1) < 0 || uv(1) > im_h)
+                continue;
+            if (pMP->desc_score < th_score2)
+                continue;
             kp2.push_back(kp);
-            descriptors2.row(iMP) = pMP->GetDescriptor();
-            scores2.push_back(pMP.desc_score);
+            auto newdesc = pMP->GetDescriptor();
+            newdesc.copyTo(descriptors2.row(j));
+            scores2.push_back(pMP->desc_score);
+            MapPoints_to_match.push_back(pMP);
+            j++;
         }
-        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+
+        descriptors2.resize(kp2.size(), F.mDescriptors.cols);
+
+        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 0);
         for (int i = 0; i < nmatches; i++)
         {
-            F.mvpMapPoints[matches[i].queryIdx] = vpMapPoints[matches[i].trainIdx];
+            F.mvpMapPoints[matches[i].queryIdx] = MapPoints_to_match[matches[i].trainIdx];
         }
 
         return nmatches;
@@ -101,33 +154,36 @@ namespace ORB_SLAM3
         const vector<MapPoint *> vpMapPointsKF = pKF->GetMapPointMatches();
 
         vpMapPointMatches = vector<MapPoint *>(F.N, static_cast<MapPoint *>(NULL));
-        std::vector<cv::KeyPoint> kp1;
+        std::vector<cv::KeyPoint> kp1 = F.mvKeysUn;
         std::vector<cv::KeyPoint> kp2;
         std::vector<cv::DMatch> matches;
-        std::vector<float> scores1;
+        std::vector<float> scores1 = F.scores;
         std::vector<float> scores2;
-        cv::Mat descriptors1;
+        cv::Mat descriptors1 = F.mDescriptors;
         cv::Mat descriptors2;
-        descriptors1.create(F.mDescriptors.rows, F.mDescriptors.cols, CV_32F);
-        descriptors2.create(vpMapPointsKF.size(), F.mDescriptors.cols, CV_32F);
-        // descriptors2.create(pKF.mDescriptors.rows, pKF.mDescriptors.cols, CV_32F);
-        for (size_t iMP = 0; iMP < F.N; iMP++)
-        {
-            kp1.push_back(F.mvKeys[iMP]);
-            descriptors1.row(iMP) = F.mDescriptors.row(iMP);
-            scores1.push_back(F.scores[iMP]);
-        }
+        vector<MapPoint *> MapPoints_to_match;
+        std::vector<int> inds;
         for (size_t iMP = 0; iMP < vpMapPointsKF.size(); iMP++)
         {
-            kp2.push_back(vpMapPointsKF[iMP]->GetKeyPoint());
-            descriptors2.row(iMP) = vpMapPointsKF[iMP]->GetDescriptor();
-            scores2.push_back(vpMapPointsKF[iMP].desc_score);
+            MapPoint *pMP = vpMapPointsKF[iMP];
+            if (!pMP)
+                continue;
+            if (pMP->isBad())
+                continue;
+
+            kp2.push_back(pKF->mvKeysUn[iMP]);
+            auto newdesc = pMP->GetDescriptor();
+            descriptors2.push_back(newdesc);
+            scores2.push_back(pMP->desc_score);
+            MapPoints_to_match.push_back(pMP);
         }
-        int nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+
+        int nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 1);
+
         for (int i = 0; i < nmatches; i++)
         {
-            MapPoint *pMP = vpMapPointsKF[matches[i].trainIdx];
-            // F.mvpMapPoints[matches[i].queryIdx] = pMP;
+            MapPoint *pMP = MapPoints_to_match[matches[i].trainIdx];
+
             vpMapPointMatches[matches[i].queryIdx] = pMP;
         }
 
@@ -137,27 +193,15 @@ namespace ORB_SLAM3
     int SPmatcher::SearchByProjection(KeyFrame *pKF, Sophus::Sim3f &Scw, const vector<MapPoint *> &vpPoints,
                                       vector<MapPoint *> &vpMatched, int th, float ratioHamming)
     {
-        // Get Calibration Parameters for later projection
-        // const float &fx = pKF->fx;
-        // const float &fy = pKF->fy;
-        // const float &cx = pKF->cx;
-        // const float &cy = pKF->cy;
 
-        std::vector<cv::KeyPoint> kp1;
+        std::vector<cv::KeyPoint> kp1 = pKF->mvKeys;
         std::vector<cv::KeyPoint> kp2;
         std::vector<cv::DMatch> matches;
-        std::vector<float> scores1;
+        std::vector<float> scores1 = pKF->scores;
         std::vector<float> scores2;
-        cv::Mat descriptors1;
+        cv::Mat descriptors1 = pKF->mDescriptors;
         cv::Mat descriptors2;
-        descriptors1.create(pKF->mDescriptors.rows, pKF->mDescriptors.cols, CV_32F);
         descriptors2.create(vpPoints.size(), pKF->mDescriptors.cols, CV_32F);
-        for (size_t iMP = 0; iMP < pKF->N; iMP++)
-        {
-            kp1.push_back(pKF->mvKeys[iMP]);
-            descriptors1.row(iMP) = pKF->mDescriptors.row(iMP);
-            scores1.push_back(pKF->scores[iMP]);
-        }
 
         Sophus::SE3f Tcw = Sophus::SE3f(Scw.rotationMatrix(), Scw.translation() / Scw.scale());
         Eigen::Vector3f Ow = Tcw.inverse().translation();
@@ -167,9 +211,6 @@ namespace ORB_SLAM3
         spAlreadyFound.erase(static_cast<MapPoint *>(NULL));
 
         int nmatches = 0;
-
-        // For each Candidate MapPoint Project and Match
-        // TODO: if camera is spherical all points are in image
         for (int iMP = 0, iendMP = vpPoints.size(); iMP < iendMP; iMP++)
         {
             MapPoint *pMP = vpPoints[iMP];
@@ -184,36 +225,26 @@ namespace ORB_SLAM3
             // Transform into Camera Coords.
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
 
-            // Depth must be positive
-            // if (p3Dc(2) < 0.0)
-            // continue;
-
             // Project into Image
             const Eigen::Vector2f uv = pKF->mpCamera->project(p3Dc);
             auto kp = cv::KeyPoint(uv(0), uv(1), 1);
             kp2.push_back(kp);
-            descriptors2.row(iMP) = pMP->GetDescriptor();
-            scores2.push_back(pMP.desc_score);
+            auto desc = pMP->GetDescriptor();
+            desc.copyTo(descriptors2.row(iMP));
+            scores2.push_back(pMP->desc_score);
         }
-        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 0);
         for (int i = 0; i < nmatches; i++)
         {
 
             vpMatched[matches[i].queryIdx] = vpPoints[matches[i].trainIdx];
         }
-
         return nmatches;
     }
 
     int SPmatcher::SearchByProjection(KeyFrame *pKF, Sophus::Sim3<float> &Scw, const std::vector<MapPoint *> &vpPoints, const std::vector<KeyFrame *> &vpPointsKFs,
                                       std::vector<MapPoint *> &vpMatched, std::vector<KeyFrame *> &vpMatchedKF, int th, float ratioHamming)
     {
-        // Get Calibration Parameters for later projection
-        // const float &fx = pKF->fx;
-        // const float &fy = pKF->fy;
-        // const float &cx = pKF->cx;
-        // const float &cy = pKF->cy;
-        //
 
         std::vector<cv::KeyPoint> kp1;
         std::vector<cv::KeyPoint> kp2;
@@ -223,7 +254,6 @@ namespace ORB_SLAM3
         cv::Mat descriptors1;
         cv::Mat descriptors2;
         Sophus::SE3f Tcw = Sophus::SE3f(Scw.rotationMatrix(), Scw.translation() / Scw.scale());
-        // Eigen::Vector3f Ow = Tcw.inverse().translation();
         descriptors1.create(pKF->mDescriptors.rows, pKF->mDescriptors.cols, CV_32F);
         descriptors2.create(vpPoints.size(), pKF->mDescriptors.cols, CV_32F);
 
@@ -250,9 +280,9 @@ namespace ORB_SLAM3
             auto kp = cv::KeyPoint(uv(0), uv(1), 1);
             kp2.push_back(kp);
             descriptors2.row(iMP) = vpPoints[iMP]->GetDescriptor();
-            scores2.push_back(vpPoints[iMP].desc_score);
+            scores2.push_back(vpPoints[iMP]->desc_score);
         }
-        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 0);
         for (int i = 0; i < nmatches; i++)
         {
             vpMatched[matches[i].queryIdx] = vpPoints[matches[i].trainIdx];
@@ -266,28 +296,22 @@ namespace ORB_SLAM3
     {
         int nmatches = 0;
         vnMatches12 = vector<int>(F1.mvKeysUn.size(), -1);
-        std::vector<cv::KeyPoint> &kp1 = F1.mvKeysUn;
-        std::vector<cv::KeyPoint> &kp2 = F2.mvKeysUn;
+        std::vector<cv::KeyPoint> &kp1 = F1.mvKeys;
+        std::vector<cv::KeyPoint> &kp2 = F2.mvKeys;
         std::vector<cv::DMatch> matches;
         std::vector<float> &scores1 = F1.scores;
         std::vector<float> &scores2 = F2.scores;
         cv::Mat &descriptors1 = F1.mDescriptors;
         cv::Mat &descriptors2 = F2.mDescriptors;
-        // vector<int> vnMatches21(F2.mvKeysUn.size(), -1);
-        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 0);
+
         for (int i = 0; i < nmatches; i++)
         {
             vnMatches12[matches[i].queryIdx] = matches[i].trainIdx;
-            // vnMatches21[matches[i].trainIdx] = matches[i].queryIdx;
         }
         for (size_t i1 = 0, iend1 = vnMatches12.size(); i1 < iend1; i1++)
             if (vnMatches12[i1] >= 0)
                 vbPrevMatched[i1] = F2.mvKeysUn[vnMatches12[i1]].pt;
-
-        // descriptors1.create(F1.mDescriptors.rows, F1.mDescriptors.cols, CV_32F);
-        // descriptors2.create(F2.mDescriptors.rows, F2.mDescriptors.cols, CV_32F);
-
-        // Update prev matched
 
         return nmatches;
     }
@@ -301,6 +325,7 @@ namespace ORB_SLAM3
         std::vector<float> scores2;
         cv::Mat descriptors1;
         cv::Mat descriptors2;
+        vector<MapPoint *> vpMapPoints1 = pKF1->GetMapPointMatches();
         vpMatches12 = vector<MapPoint *>(vpMapPoints1.size(), static_cast<MapPoint *>(NULL));
 
         descriptors1.create(pKF1->mDescriptors.rows, pKF1->mDescriptors.cols, CV_32F);
@@ -312,97 +337,42 @@ namespace ORB_SLAM3
         scores1 = pKF1->scores;
         scores2 = pKF2->scores;
 
-        // for (size_t iMP = 0; iMP < pKF1->N; iMP++)
-        // {
-        // kp1.push_back(pKF1->mvKeysUn[iMP]);
-        // descriptors1.row(iMP) = pKF1->mDescriptors.row(iMP);
-        // scores1.push_back(pKF1->scores[iMP]);
-        // }
-        // for (size_t iMP = 0; iMP < pKF2->N; iMP++)
-        // {
-        // kp2.push_back(pKF2->mvKeysUn[iMP]);
-        // descriptors2.row(iMP) = pKF2->mDescriptors.row(iMP);
-        // scores2.push_back(pKF2->scores[iMP]);
-        // }
-        int nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+
+        int nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches, 1);
         for (int i = 0; i < nmatches; i++)
         {
             vpMatches12[matches[i].queryIdx] = pKF2->GetMapPointMatches()[matches[i].trainIdx];
         }
-
         return nmatches;
     }
 
     int SPmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2,
                                           vector<pair<size_t, size_t>> &vMatchedPairs, const bool bOnlyStereo, const bool bCoarse)
     {
-        // const DBoW2::FeatureVector &vFeatVec1 = pKF1->mFeatVec;
-        // const DBoW2::FeatureVector &vFeatVec2 = pKF2->mFeatVec;
-        std::vector<cv::KeyPoint> &kps1 = pKF1->mvKeysUn;
-        std::vector<cv::KeyPoint> &kps2 = pKF2->mvKeysUn;
+
+        std::vector<cv::KeyPoint> kps1 =pKF1->mvKeysUn;
+        std::vector<cv::KeyPoint> kps2= pKF2->mvKeysUn;
         std::vector<cv::DMatch> matches;
-        std::vector<float> &scores1 = pKF1->scores;
-        std::vector<float> &scores2 = pKF2->scores;
-        cv::Mat &descriptors1 = pKF1->mDescriptors;
-        cv::Mat &descriptors2 = pKF2->mDescriptors;
+        std::vector<float> scores1 = pKF1->scores;
+        std::vector<float> scores2 = pKF2->scores;
+        cv::Mat descriptors1 = pKF1->mDescriptors;
+        cv::Mat descriptors2 = pKF2->mDescriptors;
+        std::vector<int> inds1;
+        std::vector<int> inds2;
 
-        // descriptors1.create(pKF1->mDescriptors.rows, pKF1->mDescriptors.cols, CV_32F);
-        // descriptors2.create(pKF2->mDescriptors.rows, pKF2->mDescriptors.cols, CV_32F);
-
-        // Compute epipole in second image
-        Sophus::SE3f T1w = pKF1->GetPose();
-        Sophus::SE3f T2w = pKF2->GetPose();
-        Sophus::SE3f Tw2 = pKF2->GetPoseInverse(); // for convenience
-        Eigen::Vector3f Cw = pKF1->GetCameraCenter();
-        Eigen::Vector3f C2 = T2w * Cw;
-
-        Eigen::Vector2f ep = pKF2->mpCamera->project(C2);
-        Sophus::SE3f T12;
-        Sophus::SE3f Tll, Tlr, Trl, Trr;
-        Eigen::Matrix3f R12; // for fastest computation
-        Eigen::Vector3f t12; // for fastest computation
-
-        GeometricCamera *pCamera1 = pKF1->mpCamera, *pCamera2 = pKF2->mpCamera;
-
-        if (!pKF1->mpCamera2 && !pKF2->mpCamera2)
-        {
-            T12 = T1w * Tw2;
-            R12 = T12.rotationMatrix();
-            t12 = T12.translation();
-        }
-        else
-        {
-            Sophus::SE3f Tr1w = pKF1->GetRightPose();
-            Sophus::SE3f Twr2 = pKF2->GetRightPoseInverse();
-            Tll = T1w * Tw2;
-            Tlr = T1w * Twr2;
-            Trl = Tr1w * Tw2;
-            Trr = Tr1w * Twr2;
-        }
-
-        Eigen::Matrix3f Rll = Tll.rotationMatrix(), Rlr = Tlr.rotationMatrix(), Rrl = Trl.rotationMatrix(), Rrr = Trr.rotationMatrix();
-        Eigen::Vector3f tll = Tll.translation(), tlr = Tlr.translation(), trl = Trl.translation(), trr = Trr.translation();
-
-        // Find matches between not tracked keypoints
-        // Matching speed-up by ORB Vocabulary
-        // Compare only ORB that share the same node
         int nmatches = 0;
-        nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches);
-        vector<bool> vbMatched2(pKF2->N, false);
-        vector<int> vMatches12(pKF1->N, -1);
+        nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches, 2);
         for (int i = 0; i < nmatches; i++)
         {
-            vMatches12[matches[i].queryIdx] = matches[i].trainIdx;
-            vbMatched2[matches[i].trainIdx] = true;
+            auto *pMP1 = pKF1->GetMapPoint(matches[i].queryIdx);
+            auto *pMP2 = pKF2->GetMapPoint(matches[i].trainIdx);
+            if (pMP1 || pMP2)
+                continue;
+            
+
+            vMatchedPairs.push_back(make_pair(matches[i].queryIdx, matches[i].trainIdx));
         }
 
-        for (size_t i = 0, iend = vMatches12.size(); i < iend; i++)
-        {
-            if (vMatches12[i] < 0)
-                continue;
-            vMatchedPairs.push_back(make_pair(i, vMatches12[i]));
-        }
-        // TODO: check epipolar  constraints
 
         return nmatches;
     }
@@ -412,14 +382,15 @@ namespace ORB_SLAM3
         GeometricCamera *pCamera;
         Sophus::SE3f Tcw;
         Eigen::Vector3f Ow;
-        std::vector<cv::KeyPoint> &kps1 = pKF->mvKeysUn;
+        std::vector<cv::KeyPoint> kps1 = pKF->mvKeysUn;
         std::vector<cv::KeyPoint> kps2;
         std::vector<cv::DMatch> matches;
-        std::vector<float> &scores1 = pKF->scores;
+        std::vector<float> scores1 = pKF->scores;
         std::vector<float> scores2;
-        cv::Mat &descriptors1 = pKF->mDescriptors;
+        cv::Mat descriptors1 = pKF->mDescriptors;
         cv::Mat descriptors2;
         descriptors2.create(vpMapPoints.size(), pKF->mDescriptors.cols, CV_32F);
+        vector<MapPoint *> MapPoints_to_match;
 
         if (bRight)
         {
@@ -434,18 +405,13 @@ namespace ORB_SLAM3
             pCamera = pKF->mpCamera;
         }
 
-        const float &fx = pKF->fx;
-        const float &fy = pKF->fy;
-        const float &cx = pKF->cx;
-        const float &cy = pKF->cy;
-        const float &bf = pKF->mbf;
-
         int nFused = 0;
 
         const int nMPs = vpMapPoints.size();
 
         // For debbuging
         int count_notMP = 0, count_bad = 0, count_isinKF = 0, count_negdepth = 0, count_notinim = 0, count_dist = 0, count_normal = 0, count_notidx = 0, count_thcheck = 0;
+        int j = 0;
         for (int i = 0; i < nMPs; i++)
         {
             MapPoint *pMP = vpMapPoints[i];
@@ -490,22 +456,13 @@ namespace ORB_SLAM3
                     continue;
                 }
             }
-            const float ur = uv(0) - bf * invz;
 
-            // const float maxDistance = pMP->GetMaxDistanceInvariance();
-            // const float minDistance = pMP->GetMinDistanceInvariance();
-            // Eigen::Vector3f PO = p3Dw - Ow;
-            // const float dist3D = PO.norm();
+            Eigen::Vector3f PO = p3Dw - Ow;
+            const float dist3D = PO.norm();
 
-            // Depth must be inside the scale pyramid of the image
-            // if (dist3D < minDistance || dist3D > maxDistance)
-            // {
-            // count_dist++;
-            // continue;
-            // }
 
             // Viewing angle must be less than 60 deg
-            if (pCamera->getType() != 2)
+            if (pCamera->GetType() != 2)
             {
                 Eigen::Vector3f Pn = pMP->GetNormal();
 
@@ -515,47 +472,22 @@ namespace ORB_SLAM3
                     continue;
                 }
             }
-            // int nPredictedLevel = pMP->PredictScale(dist3D, pKF);
-
-            // Search in a radius
-            // const float radius = th * pKF->mvScaleFactors[nPredictedLevel];
-
-            // const vector<size_t> vIndices = pKF->GetFeaturesInArea(uv(0), uv(1), radius, bRight);
-
-            // if (vIndices.empty())
-            // {
-            // count_notidx++;
-            // continue;
-            // }
-
-            // Match to the most similar keypoint in the radius
-
-            // const cv::Mat dMP = pMP->GetDescriptor();
-            descriptors2.row(i) = pMP->GetDescriptor();
+            pMP->GetDescriptor().copyTo(descriptors2.row(j));
+            j++;
             kps2.push_back(cv::KeyPoint(uv(0), uv(1), 1));
-            scores2.push_back(pMP.desc_score);
+            scores2.push_back(pMP->desc_score);
+            MapPoints_to_match.push_back(pMP);
         }
-        int nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches);
+        // resize descriptors2
+        descriptors2.resize(kps2.size());
+        if (kps2.size() == 0)
+            return 0;
+        int nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches, 3);
 
         for (int i = 0; i < nmatches; i++)
         {
-            MapPoint *pMP = vpMapPoints[matches[i].trainIdx];
-            // if (pMP->isBad())
-            // continue;
-            // if (pMP->IsInKeyFrame(pKF))
-            // continue;
-            // pMP->AddObservation(pKF, matches[i].trainIdx);
-            // pKF->AddMapPoint(pMP, matches[i].queryIdx);
-            // nFused++;
+            MapPoint *pMP = MapPoints_to_match[matches[i].trainIdx];
 
-            // const cv::KeyPoint &kp = (pKF->NLeft == -1) ? pKF->mvKeysUn[idx]
-            //  : (!bRight)        ? pKF->mvKeys[idx]
-            // : pKF->mvKeysRight[idx];
-            //
-            // const int &kpLevel = kp.octave;
-
-            // if (kpLevel < nPredictedLevel - 1 || kpLevel > nPredictedLevel)
-            // continue;
             const cv::KeyPoint &kp = kps1[matches[i].queryIdx];
             Eigen::Vector3f p3Dw = pMP->GetWorldPos();
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
@@ -567,7 +499,7 @@ namespace ORB_SLAM3
             const float ey = uv(1) - kpy;
             const float e2 = ex * ex + ey * ey;
 
-            if (e2 * pKF->mvInvLevelSigma2[kpLevel] > 5.99)
+            if (e2 > 5.99)
                 continue;
 
             MapPoint *pMPinKF = pKF->GetMapPoint(matches[i].queryIdx);
@@ -589,18 +521,20 @@ namespace ORB_SLAM3
             nFused++;
         }
 
-        // If there is already a MapPoint replace otherwise add new measurement
-
         return nFused;
     }
 
     int SPmatcher::Fuse(KeyFrame *pKF, Sophus::Sim3f &Scw, const vector<MapPoint *> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint)
     {
-        // Get Calibration Parameters for later projection
-        const float &fx = pKF->fx;
-        const float &fy = pKF->fy;
-        const float &cx = pKF->cx;
-        const float &cy = pKF->cy;
+
+        std::vector<cv::KeyPoint> kps1 = pKF->mvKeysUn;
+        std::vector<cv::KeyPoint> kps2;
+        std::vector<cv::DMatch> matches;
+        std::vector<float> scores1 = pKF->scores;
+        std::vector<float> scores2;
+        cv::Mat descriptors1 = pKF->mDescriptors;
+        cv::Mat descriptors2;
+        descriptors2.create(vpPoints.size(), pKF->mDescriptors.cols, CV_32F);
 
         // Decompose Scw
         Sophus::SE3f Tcw = Sophus::SE3f(Scw.rotationMatrix(), Scw.translation() / Scw.scale());
@@ -614,7 +548,7 @@ namespace ORB_SLAM3
         const int nPoints = vpPoints.size();
 
         // For each candidate MapPoint project and match
-        for (int i = 0; i < nMPs; i++)
+        for (int i = 0; i < nPoints; i++)
         {
             MapPoint *pMP = vpPoints[i];
 
@@ -639,18 +573,20 @@ namespace ORB_SLAM3
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
 
             // Depth must be positive
-            if (p3Dc(2) < 0.0f)
+            if (pKF->mpCamera->GetType() != 2)
             {
+                if (p3Dc(2) < 0.0f)
+                {
 
-                continue;
+                    continue;
+                }
             }
-
             const float invz = 1 / p3Dc(2);
 
-            const Eigen::Vector2f uv = pCamera->project(p3Dc);
+            const Eigen::Vector2f uv = pKF->mpCamera->project(p3Dc);
 
             // Point must be inside the image
-            if (pCamera->GetType() != 2)
+            if (pKF->mpCamera->GetType() != 2)
             {
                 if (!pKF->IsInImage(uv(0), uv(1)))
                 {
@@ -659,20 +595,11 @@ namespace ORB_SLAM3
                 }
             }
 
-            // const float maxDistance = pMP->GetMaxDistanceInvariance();
-            // const float minDistance = pMP->GetMinDistanceInvariance();
-            // Eigen::Vector3f PO = p3Dw - Ow;
-            // const float dist3D = PO.norm();
-
-            // Depth must be inside the scale pyramid of the image
-            // if (dist3D < minDistance || dist3D > maxDistance)
-            // {
-            // count_dist++;
-            // continue;
-            // }
+            Eigen::Vector3f PO = p3Dw - Ow;
+            const float dist3D = PO.norm();
 
             // Viewing angle must be less than 60 deg
-            if (pCamera->getType() != 2)
+            if (pKF->mpCamera->GetType() != 2)
             {
                 Eigen::Vector3f Pn = pMP->GetNormal();
 
@@ -681,51 +608,21 @@ namespace ORB_SLAM3
                     continue;
                 }
             }
-            // int nPredictedLevel = pMP->PredictScale(dist3D, pKF);
-
-            // Search in a radius
-            // const float radius = th * pKF->mvScaleFactors[nPredictedLevel];
-
-            // const vector<size_t> vIndices = pKF->GetFeaturesInArea(uv(0), uv(1), radius, bRight);
-
-            // if (vIndices.empty())
-            // {
-            // count_notidx++;
-            // continue;
-            // }
-
-            // Match to the most similar keypoint in the radius
-
             // const cv::Mat dMP = pMP->GetDescriptor();
             descriptors2.row(i) = pMP->GetDescriptor();
             kps2.push_back(cv::KeyPoint(uv(0), uv(1), 1));
-            scores2.push_back(pMP.desc_score);
+            scores2.push_back(pMP->desc_score);
         }
-        int nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches);
+        int nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches, 3);
 
         for (int i = 0; i < nmatches; i++)
         {
             MapPoint *pMP = vpPoints[matches[i].trainIdx];
-            // if (pMP->isBad())
-            // continue;
-            // if (pMP->IsInKeyFrame(pKF))
-            // continue;
-            // pMP->AddObservation(pKF, matches[i].trainIdx);
-            // pKF->AddMapPoint(pMP, matches[i].queryIdx);
-            // nFused++;
 
-            // const cv::KeyPoint &kp = (pKF->NLeft == -1) ? pKF->mvKeysUn[idx]
-            //  : (!bRight)        ? pKF->mvKeys[idx]
-            // : pKF->mvKeysRight[idx];
-            //
-            // const int &kpLevel = kp.octave;
-
-            // if (kpLevel < nPredictedLevel - 1 || kpLevel > nPredictedLevel)
-            // continue;
             const cv::KeyPoint &kp = kps1[matches[i].queryIdx];
             Eigen::Vector3f p3Dw = pMP->GetWorldPos();
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
-            const Eigen::Vector2f uv = pCamera->project(p3Dc);
+            const Eigen::Vector2f uv = pKF->mpCamera->project(p3Dc);
 
             const float &kpx = kp.pt.x;
             const float &kpy = kp.pt.y;
@@ -733,7 +630,7 @@ namespace ORB_SLAM3
             const float ey = uv(1) - kpy;
             const float e2 = ex * ex + ey * ey;
 
-            if (e2 * pKF->mvInvLevelSigma2[kpLevel] > 5.99)
+            if (e2 > 5.99)
                 continue;
 
             // If there is already a MapPoint replace otherwise add new measurement
@@ -859,7 +756,7 @@ namespace ORB_SLAM3
 
                 const cv::Mat &dKF = pKF2->mDescriptors.row(idx);
 
-                const int dist = DescriptorDistance(dMP, dKF);
+                const int dist = 0;
 
                 if (dist < bestDist)
                 {
@@ -939,7 +836,7 @@ namespace ORB_SLAM3
 
                 const cv::Mat &dKF = pKF1->mDescriptors.row(idx);
 
-                const int dist = DescriptorDistance(dMP, dKF);
+                const int dist = 0;
 
                 if (dist < bestDist)
                 {
@@ -985,14 +882,13 @@ namespace ORB_SLAM3
         std::vector<float> scores2;
         cv::Mat descriptors1;
         cv::Mat descriptors2;
-
-        // Rotation Histogram (to check rotation consistency)
-
+        descriptors2.create(LastFrame.N, LastFrame.mDescriptors.cols, CV_32F);
         const Sophus::SE3f Tcw = CurrentFrame.GetPose();
         const Eigen::Vector3f twc = Tcw.inverse().translation();
-
         const Sophus::SE3f Tlw = LastFrame.GetPose();
         const Eigen::Vector3f tlc = Tlw * twc;
+        std::vector<MapPoint *> MapPoints_to_match;
+        int j = 0;
 
         for (int i = 0; i < LastFrame.N; i++)
         {
@@ -1018,45 +914,34 @@ namespace ORB_SLAM3
                         continue;
                     if (uv(1) < CurrentFrame.mnMinY || uv(1) > CurrentFrame.mnMaxY)
                         continue;
-                    kp2.push_back(cv::KeyPoint(uv(0), uv(1), 1));
-                    scores2.push_back(pMP.desc_score);
-                    descriptors2.push_back(pMP->GetDescriptor());
+                    kps2.push_back(cv::KeyPoint(uv(0), uv(1), 1));
+                    scores2.push_back(pMP->desc_score);
+                    pMP->GetDescriptor().copyTo(descriptors2.row(j));
+                    j++;
+                    MapPoints_to_match.push_back(pMP);
                 }
             }
         }
+        descriptors2.resize(kps2.size());
         for (int i = 0; i < CurrentFrame.N; i++)
         {
             if (CurrentFrame.mvpMapPoints[i])
                 if (CurrentFrame.mvpMapPoints[i]->Observations() > 0)
                     continue;
-            kp1.push_back(CurrentFrame.mvKeysUn[i]);
+            kps1.push_back(CurrentFrame.mvKeysUn[i]);
             scores1.push_back(CurrentFrame.scores[i]);
+
             descriptors1.push_back(CurrentFrame.mDescriptors.row(i));
         }
-        nmatches = this->SuperGluematcher(kp1, kp2, descriptors1, descriptors2, scores1, scores2, matches);
+        nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches, 0);
 
-        for (int i = 0; i < nmatches; i++)
+        for (int i = 0; i < matches.size(); i++)
         {
 
-            MapPoint *pMP = LastFrame.mvpMapPoints[matches[i].queryIdx];
-            // check projection error
-            const cv::KeyPoint &kp = CurrentFrame.mvKeysUn[matches[i].trainIdx];
-            Eigen::Vector3f x3Dw = pMP->GetWorldPos();
-            Eigen::Vector3f x3Dc = Tcw * x3Dw;
-            auto uv = CurrentFrame.mpCamera->project(x3Dc);
-            const float &kpx = kp.pt.x;
-            const float &kpy = kp.pt.y;
-            const float ex = uv(0) - kpx;
-            const float ey = uv(1) - kpy;
-            const float e2 = ex * ex + ey * ey;
-            if (e2 * CurrentFrame.mvInvLevelSigma2[kp.octave] > 5.99)
-            {
-                nmatches--;
-                continue;
-            }
-            CurrentFrame.mvpMapPoints[i] = pMP;
-        }
+            MapPoint *pMP = MapPoints_to_match[matches[i].trainIdx];
 
+            CurrentFrame.mvpMapPoints[matches[i].queryIdx] = pMP;
+        }
         return nmatches;
     }
 
@@ -1095,27 +980,25 @@ namespace ORB_SLAM3
                         continue;
 
                     kps2.push_back(cv::KeyPoint(uv(0), uv(1), 1));
-                    scores2.push_back(pMP.desc_score);
+                    scores2.push_back(pMP->desc_score);
                     descriptors2.push_back(pMP->GetDescriptor());
                 }
             }
         }
-        for (int i = 0; i < CurrentFrame.N; i++){
+        for (int i = 0; i < CurrentFrame.N; i++)
+        {
             if (CurrentFrame.mvpMapPoints[i])
-                            continue;
+                continue;
             kps1.push_back(CurrentFrame.mvKeysUn[i]);
             scores1.push_back(CurrentFrame.scores[i]);
             descriptors1.push_back(CurrentFrame.mDescriptors.row(i));
         }
-        nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches);
-        for (int i = 0; i < nmatches; i++){
+        nmatches = this->SuperGluematcher(kps1, kps2, descriptors1, descriptors2, scores1, scores2, matches, 0);
+        for (int i = 0; i < nmatches; i++)
+        {
             MapPoint *pMP = vpMPs[matches[i].trainIdx];
             CurrentFrame.mvpMapPoints[matches[i].queryIdx] = pMP;
-
-
         }
-
-                   
 
         return nmatches;
     }
@@ -1169,38 +1052,63 @@ namespace ORB_SLAM3
     // NOT USED
     float SPmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
     {
-        float dist = (float)cv::norm(a, b, cv::NORM_L2);
-
-        return dist;
+        Eigen::VectorXf f1;
+        Eigen::VectorXf f2;
+        f1.resize(256);
+        f2.resize(256);
+        for (int i = 0; i < 256; i++)
+        {
+            f1(i) = a.at<float>(i);
+            f2(i) = b.at<float>(i);
+        }
+        return 2 * (1.0 - f1.transpose() * f2);
     }
+
     int SPmatcher::SuperGluematcher(std::vector<cv::KeyPoint> &kp1, std::vector<cv::KeyPoint> &kp2, cv::Mat &des1, cv::Mat &des2, std::vector<float> &scores1,
-                                    std::vector<float> &scores2, std::vector<cv::DMatch> &matches)
+                                    std::vector<float> &scores2, std::vector<cv::DMatch> &matches, int match_type)
     {
-        Eigen::Matrix<double, 259, Eigen::Dynamic> &features0;
-        Eigen::Matrix<double, 259, Eigen::Dynamic> &features1;
-        feature0.resize(259, kp1.size());
-        feature1.resize(259, kp2.size());
-        for (int i = 0; i < kp1.size(); i++)
+        mMutex.lock();
+        Eigen::Matrix<double, 259, Eigen::Dynamic> features0;
+        Eigen::Matrix<double, 259, Eigen::Dynamic> features1;
+
+        int n1 = kp1.size();
+        int n2 = kp2.size();
+        n1 = std::min(n1, 2000);
+        n2 = std::min(n2, 2000);
+
+        features0.resize(259, n1);
+        features1.resize(259, n2);
+
+        for (int i = 0; i < n1; i++)
         {
-            feature0(0, i) = kp1[i].pt.x;
-            feature0(1, i) = kp1[i].pt.y;
-            feature0(2, i) = scores1[i];
+            features0(0, i) = scores1[i];
+
+            features0(1, i) = kp1[i].pt.x;
+            features0(2, i) = kp1[i].pt.y;
+            auto des_i = des1.row(i);
+
             for (int j = 0; j < 256; j++)
             {
-                feature0(j + 3, i) = des1.at<uchar>(i, j);
+                features0(j + 3, i) = des_i.at<float>(j);
             }
         }
-        for (int i = 0; i < kp2.size(); i++)
+
+        for (int i = 0; i < n2; i++)
         {
-            feature1(0, i) = kp2[i].pt.x;
-            feature1(1, i) = kp2[i].pt.y;
-            feature1(2, i) = scores2[i];
+            features1(0, i) = scores2[i];
+            features1(1, i) = kp2[i].pt.x;
+            features1(2, i) = kp2[i].pt.y;
+            auto des_i = des2.row(i);
+
             for (int j = 0; j < 256; j++)
             {
-                feature1(j + 3, i) = des2.at<uchar>(i, j);
+                features1(j + 3, i) = des_i.at<float>(j);
             }
         }
-        point_matcher->MatchingPoints(feature0, feature1, matches, false);
+
+        this->matcher->matching_points(features0, features1, matches, false);
+        mMutex.unlock();
+
         return matches.size();
     }
 

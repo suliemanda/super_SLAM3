@@ -19,10 +19,11 @@
 
 #include "LocalMapping.h"
 #include "LoopClosing.h"
-#include "ORBmatcher.h"
+#include "SPmatcher.h"
 #include "Optimizer.h"
 #include "Converter.h"
 #include "GeometricTools.h"
+#include "System.h"
 
 #include<mutex>
 #include<chrono>
@@ -43,6 +44,7 @@ LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, 
 
     mNumLM = 0;
     mNumKFCulling=0;
+    this->matcher=new SPmatcher(0.6, true,mpSystem->mpSPmatcher->im_w,mpSystem->mpSPmatcher->im_h,mpSystem->mpSPmatcher->dir_);//mpSystem->mpSPmatcher;
 
 #ifdef REGISTER_TIMES
     nLBA_exec = 0;
@@ -304,7 +306,7 @@ void LocalMapping::ProcessNewKeyFrame()
     }
 
     // Compute Bags of Words structures
-    mpCurrentKeyFrame->ComputeBoW();
+    // mpCurrentKeyFrame->ComputeBoW();
 
     // Associate MapPoints to the new keyframe and update normal and descriptor
     const vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
@@ -409,7 +411,6 @@ void LocalMapping::CreateNewMapPoints()
 
     float th = 0.6f;
 
-    ORBmatcher matcher(th,false);
 
     Sophus::SE3<float> sophTcw1 = mpCurrentKeyFrame->GetPose();
     Eigen::Matrix<float,3,4> eigTcw1 = sophTcw1.matrix3x4();
@@ -463,7 +464,7 @@ void LocalMapping::CreateNewMapPoints()
         vector<pair<size_t,size_t> > vMatchedIndices;
         bool bCoarse = mbInertial && mpTracker->mState==Tracking::RECENTLY_LOST && mpCurrentKeyFrame->GetMap()->GetIniertialBA2();
 
-        matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,vMatchedIndices,false,bCoarse);
+        matcher->SearchForTriangulation(mpCurrentKeyFrame,pKF2,vMatchedIndices,false,bCoarse);
 
         Sophus::SE3<float> sophTcw2 = pKF2->GetPose();
         Eigen::Matrix<float,3,4> eigTcw2 = sophTcw2.matrix3x4();
@@ -583,6 +584,7 @@ void LocalMapping::CreateNewMapPoints()
                                                                           (cosParallaxRays<0.9996 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
             {
                 goodProj = GeometricTools::Triangulate(xn1, xn2, eigTcw1, eigTcw2, x3D);
+
                 if(!goodProj)
                     continue;
             }
@@ -691,6 +693,7 @@ void LocalMapping::CreateNewMapPoints()
                 continue;
 
             // Triangulation is succesfull
+            // std::cout<<"Triangulation is succesfull"<<std::endl;
             MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
             if (bPointStereo)
                 countStereo++;
@@ -763,14 +766,13 @@ void LocalMapping::SearchInNeighbors()
     }
 
     // Search matches by projection from current KF in target KFs
-    ORBmatcher matcher;
     vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
     for(vector<KeyFrame*>::iterator vit=vpTargetKFs.begin(), vend=vpTargetKFs.end(); vit!=vend; vit++)
     {
         KeyFrame* pKFi = *vit;
 
-        matcher.Fuse(pKFi,vpMapPointMatches);
-        if(pKFi->NLeft != -1) matcher.Fuse(pKFi,vpMapPointMatches,true);
+        matcher->Fuse(pKFi,vpMapPointMatches);
+        if(pKFi->NLeft != -1) matcher->Fuse(pKFi,vpMapPointMatches,true);
     }
 
 
@@ -799,8 +801,8 @@ void LocalMapping::SearchInNeighbors()
         }
     }
 
-    matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
-    if(mpCurrentKeyFrame->NLeft != -1) matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
+    matcher->Fuse(mpCurrentKeyFrame,vpFuseCandidates);
+    if(mpCurrentKeyFrame->NLeft != -1) matcher->Fuse(mpCurrentKeyFrame,vpFuseCandidates,true);
 
 
     // Update points

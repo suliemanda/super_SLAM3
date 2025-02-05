@@ -25,7 +25,7 @@
 #include "Atlas.h"
 #include "ORBVocabulary.h"
 #include "Tracking.h"
-
+#include "SPmatcher.h"
 #include "KeyFrameDatabase.h"
 
 #include <boost/algorithm/string.hpp>
@@ -52,7 +52,7 @@ public:
 
 public:
 
-    LoopClosing(Atlas* pAtlas, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale, const bool bActiveLC);
+    LoopClosing(Atlas* pAtlas, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale, const bool bActiveLC,SPmatcher* matcher);
 
     void SetTracker(Tracking* pTracker);
 
@@ -230,11 +230,13 @@ protected:
     vector<double> vdPR_CurrentTime;
     vector<double> vdPR_MatchedTime;
     vector<int> vnPR_TypeRecogn;
+    SPmatcher *matcher;
 
     //DEBUG
     string mstrFolderSubTraj;
     int mnNumCorrection;
     int mnCorrectionGBA;
+    
 
 
     // To (de)activate LC

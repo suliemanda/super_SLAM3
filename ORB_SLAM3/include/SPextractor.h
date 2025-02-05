@@ -48,7 +48,7 @@ public:
     enum {HARRIS_SCORE=0, FAST_SCORE=1 };
 
     SPextractor(int nfeatures, float scaleFactor, int nlevels,
-                 int iniThFAST, int minThFAST);
+                 int iniThFAST, int minThFAST,std::string dir);
 
     ~SPextractor(){}
 
@@ -95,7 +95,7 @@ protected:
     int nfeatures;
     double scaleFactor;
     int nlevels;
-    int iniThFAST;
+    int iniThFAST=0.01;
     int minThFAST;
 
     std::vector<int> mnFeaturesPerLevel;

@@ -23,7 +23,7 @@
 #include "KeyFrame.h"
 #include "SPextractor.h"
 #include "Converter.h"
-#include "ORBmatcher.h"
+#include "SPmatcher.h"
 #include "GeometricCamera.h"
 
 #include <thread>
@@ -70,7 +70,7 @@ Frame::Frame(const Frame &frame)
      monoLeft(frame.monoLeft), monoRight(frame.monoRight), mvLeftToRightMatch(frame.mvLeftToRightMatch),
      mvRightToLeftMatch(frame.mvRightToLeftMatch), mvStereo3Dpoints(frame.mvStereo3Dpoints),
      mTlr(frame.mTlr), mRlr(frame.mRlr), mtlr(frame.mtlr), mTrl(frame.mTrl),
-     mTcw(frame.mTcw), mbHasPose(false), mbHasVelocity(false)
+     mTcw(frame.mTcw), mbHasPose(false), mbHasVelocity(false),scores(frame.scores)
 {
     for(int i=0;i<FRAME_GRID_COLS;i++)
         for(int j=0; j<FRAME_GRID_ROWS; j++){
@@ -418,8 +418,11 @@ void Frame::AssignFeaturesToGrid()
 void Frame::ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1)
 {
     vector<int> vLapping = {x0,x1};
-    if(flag==0)
-        monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,scores,vLapping);
+    if(flag==0){
+        monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,this->scores,vLapping);
+        // std::cout<<"monoLeft: "<<monoLeft<<std::endl;
+        // std::cout<< "scores"<<this->scores.size()<<std::endl;
+        }
     else
         monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,scores,vLapping);
 }
@@ -883,7 +886,7 @@ void Frame::ComputeStereoMatches()
             if(uR>=minU && uR<=maxU)
             {
                 const cv::Mat &dR = mDescriptorsRight.row(iR);
-                const int dist = ORBmatcher::DescriptorDistance(dL,dR);
+                const float dist = SPmatcher::DescriptorDistance(dL,dR);
 
                 if(dist<bestDist)
                 {

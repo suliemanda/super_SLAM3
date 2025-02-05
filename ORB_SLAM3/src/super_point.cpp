@@ -283,8 +283,11 @@ void SuperPoint::top_k_keypoints(std::vector<std::vector<int>> &keypoints,
       keypoints_top_k.push_back(keypoints[indexes[i]]);
       scores_top_k.push_back(scores[indexes[i]]);
     }
+
     keypoints.swap(keypoints_top_k);
     scores.swap(scores_top_k);
+    // std::cout << "___________________top k keypoints: _________________________" << keypoints.size() << std::endl;
+
   }
 }
 

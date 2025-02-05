@@ -19,7 +19,7 @@
 
 #include "Tracking.h"
 
-#include "ORBmatcher.h"
+#include "SPmatcher.h"
 #include "FrameDrawer.h"
 #include "Converter.h"
 #include "G2oTypes.h"
@@ -93,11 +93,13 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
 
             }
         }
+
     }
 
     initID = 0; lastID = 0;
     mbInitWith3KFs = false;
     mnNumDataset = 0;
+    this->matcher=this->mpSystem->mpSPmatcher;
 
     vector<GeometricCamera*> vpCams = mpAtlas->GetAllCameras();
     std::cout << "There are " << vpCams.size() << " cameras in the atlas" << std::endl;
@@ -592,14 +594,15 @@ void Tracking::newParameterLoader(Settings *settings) {
     int fIniThFAST = settings->initThFAST();
     int fMinThFAST = settings->minThFAST();
     float fScaleFactor = settings->scaleFactor();
+    std::string dir =settings->weights();
 
-    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     //IMU parameters
     Sophus::SE3f Tbc = settings->Tbc();
@@ -1370,14 +1373,14 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
     {
         return false;
     }
-
-    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    std::string dir =fSettings["Weights"];
+    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,dir);
 
     cout << endl << "ORB Extractor Parameters: " << endl;
     cout << "- Number of Features: " << nFeatures << endl;
@@ -1657,20 +1660,20 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
     mImGray = im;
-    if(mImGray.channels()==3)
-    {
-        if(mbRGB)
-            cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);
-        else
-            cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY);
-    }
-    else if(mImGray.channels()==4)
-    {
-        if(mbRGB)
-            cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY);
-        else
-            cvtColor(mImGray,mImGray,cv::COLOR_BGRA2GRAY);
-    }
+    // if(mImGray.channels()==3)
+    // {
+        // if(mbRGB)
+            // cvtColor(mImGray,mImGray,cv::COLOR_RGB2GRAY);
+        // else
+            // cvtColor(mImGray,mImGray,cv::COLOR_BGR2GRAY);
+    // }
+    // else if(mImGray.channels()==4)
+    // {
+        // if(mbRGB)
+            // cvtColor(mImGray,mImGray,cv::COLOR_RGBA2GRAY);
+        // else
+            // cvtColor(mImGray,mImGray,cv::COLOR_BGRA2GRAY);
+    // }
 
     if (mSensor == System::MONOCULAR)
     {
@@ -2038,13 +2041,16 @@ void Tracking::Track()
                 {
                     Verbose::PrintMess("TRACK: Track with respect to the reference KF ", Verbose::VERBOSITY_DEBUG);
                     bOK = TrackReferenceKeyFrame();
+
                 }
                 else
                 {
                     Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
                     bOK = TrackWithMotionModel();
+                    // std::cout<<"TrackWithMotionModel "<<bOK<<"\n";
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
+
                 }
 
 
@@ -2142,10 +2148,13 @@ void Tracking::Track()
                     if(mbVelocity)
                     {
                         bOK = TrackWithMotionModel();
+                        
                     }
                     else
                     {
+                        // std::cout << "TrackReferenceKeyFrame_______________________\n";
                         bOK = TrackReferenceKeyFrame();
+                        // std::cout << "TrackReferenceKeyFrame_________________" <<bOK<<std::endl;
                     }
                 }
                 else
@@ -2553,7 +2562,7 @@ void Tracking::MonocularInitialization()
                 mvbPrevMatched[i]=mCurrentFrame.mvKeysUn[i].pt;
 
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
-
+            
             if (mSensor == System::IMU_MONOCULAR)
             {
                 if(mpImuPreintegratedFromLastKF)
@@ -2580,10 +2589,11 @@ void Tracking::MonocularInitialization()
         }
 
         // Find correspondences
-        ORBmatcher matcher(0.9,true);
-        int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
+    
+        int nmatches = matcher->SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
+
         if(nmatches<100)
         {
             mbReadyToInitializate = false;
@@ -2627,8 +2637,8 @@ void Tracking::CreateInitialMapMonocular()
         pKFini->mpImuPreintegrated = (IMU::Preintegrated*)(NULL);
 
 
-    pKFini->ComputeBoW();
-    pKFcur->ComputeBoW();
+    // pKFini->ComputeBoW();
+    // pKFcur->ComputeBoW();
 
     // Insert KFs in the map
     mpAtlas->AddKeyFrame(pKFini);
@@ -2651,6 +2661,7 @@ void Tracking::CreateInitialMapMonocular()
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
 
         pMP->ComputeDistinctiveDescriptors();
+        // std::cout<<"init mappoint _______________________\n"<<pMP->GetDescriptor()<<"\n";
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure
@@ -2814,14 +2825,13 @@ void Tracking::CheckReplacedInLastFrame()
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
-    mCurrentFrame.ComputeBoW();
+    // mCurrentFrame.ComputeBoW();
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
-    ORBmatcher matcher(0.7,true);
     vector<MapPoint*> vpMapPointMatches;
 
-    int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
+    int nmatches = matcher->SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
 
     if(nmatches<15)
     {
@@ -2832,10 +2842,9 @@ bool Tracking::TrackReferenceKeyFrame()
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
     mCurrentFrame.SetPose(mLastFrame.GetPose());
 
-    //mCurrentFrame.PrintPointDistribution();
+    // mCurrentFrame.PrintPointDistribution();
 
 
-    // cout << " TrackReferenceKeyFrame mLastFrame.mTcw:  " << mLastFrame.mTcw << endl;
     Optimizer::PoseOptimization(&mCurrentFrame);
 
     // Discard outliers
@@ -2865,11 +2874,14 @@ bool Tracking::TrackReferenceKeyFrame()
                 nmatchesMap++;
         }
     }
+    // std::cout<<"nmatchesMap: "<<nmatchesMap<<" " <<nmatches<<"\n";
 
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
         return true;
-    else
-        return nmatchesMap>=10;
+    else{
+        std::cout << "nmatchesMap: " << nmatchesMap << std::endl;
+        return nmatchesMap>=10;        
+        }
 }
 
 void Tracking::UpdateLastFrame()
@@ -2947,7 +2959,6 @@ void Tracking::UpdateLastFrame()
 
 bool Tracking::TrackWithMotionModel()
 {
-    ORBmatcher matcher(0.9,true);
 
     // Update last frame pose according to its reference keyframe
     // Create "visual odometry" points if in Localization Mode
@@ -2977,7 +2988,8 @@ bool Tracking::TrackWithMotionModel()
     else
         th=15;
 
-    int nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
+    int nmatches = matcher->SearchByProjection(mCurrentFrame,mLastFrame,th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
+    // std::cout<<"nmatches withmodel "<<nmatches<<"\n";
 
     // If few matches, uses a wider window search
     if(nmatches<20)
@@ -2985,7 +2997,7 @@ bool Tracking::TrackWithMotionModel()
         Verbose::PrintMess("Not enough matches, wider window search!!", Verbose::VERBOSITY_NORMAL);
         fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
 
-        nmatches = matcher.SearchByProjection(mCurrentFrame,mLastFrame,2*th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
+        nmatches = matcher->SearchByProjection(mCurrentFrame,mLastFrame,2*th,mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR);
         Verbose::PrintMess("Matches with wider search: " + to_string(nmatches), Verbose::VERBOSITY_NORMAL);
 
     }
@@ -3036,8 +3048,9 @@ bool Tracking::TrackWithMotionModel()
 
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
         return true;
-    else
-        return nmatchesMap>=10;
+    else{
+        // std::cout<<"nmatchesMap_withmodel "<<nmatchesMap<<"\n";
+        return nmatchesMap>=10;}
 }
 
 bool Tracking::TrackLocalMap()
@@ -3117,7 +3130,7 @@ bool Tracking::TrackLocalMap()
                 mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
         }
     }
-
+    // std::cout<<"mnMatchesInliers: "<<mnMatchesInliers<<"\n";   
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
     mpLocalMapper->mnMatchesInliers=mnMatchesInliers;
@@ -3255,7 +3268,7 @@ bool Tracking::NeedNewKeyFrame()
     // Condition 2: Few tracked points compared to reference keyframe. Lots of visual odometry compared to map matches.
     const bool c2 = (((mnMatchesInliers<nRefMatches*thRefRatio || bNeedToInsertClose)) && mnMatchesInliers>15);
 
-    //std::cout << "NeedNewKF: c1a=" << c1a << "; c1b=" << c1b << "; c1c=" << c1c << "; c2=" << c2 << std::endl;
+    // std::cout << "NeedNewKF: c1a=" << c1a << "; c1b=" << c1b << "; c1c=" << c1c << "; c2=" << c2 << std::endl;
     // Temporal condition for Inertial cases
     bool c3 = false;
     if(mpLastKeyFrame)
@@ -3273,7 +3286,7 @@ bool Tracking::NeedNewKeyFrame()
     }
 
     bool c4 = false;
-    if ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && (mSensor == System::IMU_MONOCULAR)) // MODIFICATION_2, originally ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR)))
+    if ((((mnMatchesInliers<100) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST)) // MODIFICATION_2, originally ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR)))
         c4=true;
     else
         c4=false;
@@ -3481,7 +3494,6 @@ void Tracking::SearchLocalPoints()
 
     if(nToMatch>0)
     {
-        ORBmatcher matcher(0.8);
         int th = 1;
         if(mSensor==System::RGBD || mSensor==System::IMU_RGBD)
             th=3;
@@ -3504,7 +3516,7 @@ void Tracking::SearchLocalPoints()
         if(mState==LOST || mState==RECENTLY_LOST) // Lost for less than 1 second
             th=15; // 15
 
-        int matches = matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
+        int matches = matcher->SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
     }
 }
 
@@ -3704,7 +3716,7 @@ bool Tracking::Relocalization()
 {
     Verbose::PrintMess("Starting relocalization", Verbose::VERBOSITY_NORMAL);
     // Compute Bag of Words Vector
-    mCurrentFrame.ComputeBoW();
+    // mCurrentFrame.ComputeBoW();
 
     // Relocalization is performed when tracking is lost
     // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
@@ -3719,7 +3731,6 @@ bool Tracking::Relocalization()
 
     // We perform first an ORB matching with each candidate
     // If enough matches are found we setup a PnP solver
-    ORBmatcher matcher(0.75,true);
 
     vector<MLPnPsolver*> vpMLPnPsolvers;
     vpMLPnPsolvers.resize(nKFs);
@@ -3739,7 +3750,7 @@ bool Tracking::Relocalization()
             vbDiscarded[i] = true;
         else
         {
-            int nmatches = matcher.SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]);
+            int nmatches = matcher->SearchByBoW(pKF,mCurrentFrame,vvpMapPointMatches[i]);
             if(nmatches<15)
             {
                 vbDiscarded[i] = true;
@@ -3754,11 +3765,11 @@ bool Tracking::Relocalization()
             }
         }
     }
+    std::cout<<"nCandidates: "<<nCandidates<<std::endl;
 
     // Alternatively perform some iterations of P4P RANSAC
     // Until we found a camera pose supported by enough inliers
     bool bMatch = false;
-    ORBmatcher matcher2(0.9,true);
 
     while(nCandidates>0 && !bMatch)
     {
@@ -3806,6 +3817,7 @@ bool Tracking::Relocalization()
                 }
 
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
+                std::cout<<"nGood: "<<nGood<<std::endl;
 
                 if(nGood<10)
                     continue;
@@ -3817,7 +3829,7 @@ bool Tracking::Relocalization()
                 // If few inliers, search by projection in a coarse window and optimize again
                 if(nGood<50)
                 {
-                    int nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
+                    int nadditional =matcher->SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
 
                     if(nadditional+nGood>=50)
                     {
@@ -3831,7 +3843,7 @@ bool Tracking::Relocalization()
                             for(int ip =0; ip<mCurrentFrame.N; ip++)
                                 if(mCurrentFrame.mvpMapPoints[ip])
                                     sFound.insert(mCurrentFrame.mvpMapPoints[ip]);
-                            nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
+                            nadditional =matcher->SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
 
                             // Final optimization
                             if(nGood+nadditional>=50)

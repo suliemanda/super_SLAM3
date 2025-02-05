@@ -21,6 +21,7 @@
 #include "System.h"
 #include "Converter.h"
 #include <thread>
+#include "SPmatcher.h"
 #include <pangolin/pangolin.h>
 #include <iomanip>
 #include <openssl/md5.h>
@@ -65,6 +66,9 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         cout << "Stereo-Inertial" << endl;
     else if(mSensor==IMU_RGBD)
         cout << "RGB-D-Inertial" << endl;
+    
+    
+
 
     //Check settings file
     cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
@@ -97,6 +101,12 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
             mStrSaveAtlasToFile = (string)node;
         }
     }
+    int w = fsSettings["Camera.width"];
+    int h=fsSettings["Camera.height"];
+    std::string dir =fsSettings["Weights"];
+    cout<<"Constructing Matcher"<<std::endl;
+    this->mpSPmatcher = new SPmatcher(0.6, true,w,h,dir);
+    mpSPmatcher->matcher->build();
 
     node = fsSettings["loopClosing"];
     bool activeLC = true;
@@ -210,7 +220,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Initialize the Loop Closing thread and launch
     // mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR
-    mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC); // mSensor!=MONOCULAR);
+    mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC,mpSPmatcher); // mSensor!=MONOCULAR);
     mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
 
     //Set pointers between threads

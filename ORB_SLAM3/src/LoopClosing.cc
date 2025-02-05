@@ -22,7 +22,7 @@
 #include "Sim3Solver.h"
 #include "Converter.h"
 #include "Optimizer.h"
-#include "ORBmatcher.h"
+#include "SPmatcher.h"
 #include "G2oTypes.h"
 
 #include<mutex>
@@ -32,11 +32,11 @@
 namespace ORB_SLAM3
 {
 
-LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale, const bool bActiveLC):
+LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale, const bool bActiveLC,SPmatcher *mpSPmatcher):
     mbResetRequested(false), mbResetActiveMapRequested(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas),
     mpKeyFrameDB(pDB), mpORBVocabulary(pVoc), mpMatchedKF(NULL), mLastLoopKFid(0), mbRunningGBA(false), mbFinishedGBA(true),
     mbStopGBA(false), mpThreadGBA(NULL), mbFixScale(bFixScale), mnFullBAIdx(0), mnLoopNumCoincidences(0), mnMergeNumCoincidences(0),
-    mbLoopDetected(false), mbMergeDetected(false), mnLoopNumNotFound(0), mnMergeNumNotFound(0), mbActiveLC(bActiveLC)
+    mbLoopDetected(false), mbMergeDetected(false), mnLoopNumNotFound(0), mnMergeNumNotFound(0), mbActiveLC(bActiveLC), matcher(mpSPmatcher)
 {
     mnCovisibilityConsistencyTh = 3;
     mpLastCurrentKF = static_cast<KeyFrame*>(NULL);
@@ -588,8 +588,6 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
     int nNumCovisibles = 10;
 
-    ORBmatcher matcherBoW(0.9, true);
-    ORBmatcher matcher(0.75, true);
 
     // Varibles to select the best numbe
     KeyFrame* pBestMatchedKF;
@@ -659,7 +657,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             if(!vpCovKFi[j] || vpCovKFi[j]->isBad())
                 continue;
 
-            int num = matcherBoW.SearchByBoW(mpCurrentKF, vpCovKFi[j], vvpMatchedMPs[j]);
+            int num = matcher->SearchByBoW(mpCurrentKF, vpCovKFi[j], vvpMatchedMPs[j]);
             if (num > nMostBoWNumMatches)
             {
                 nMostBoWNumMatches = num;
@@ -752,7 +750,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
                 vector<KeyFrame*> vpMatchedKF;
                 vpMatchedKF.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
-                int numProjMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpKeyFrames, vpMatchedMP, vpMatchedKF, 8, 1.5);
+                int numProjMatches = matcher->SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpKeyFrames, vpMatchedMP, vpMatchedKF, 8, 1.5);
                 //cout <<"BoW: " << numProjMatches << " matches between " << vpMapPoints.size() << " points with coarse Sim3" << endl;
 
                 if(numProjMatches >= nProjMatches)
@@ -774,7 +772,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
                         vector<MapPoint*> vpMatchedMP;
                         vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
-                        int numProjOptMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpMatchedMP, 5, 1.0);
+                        int numProjOptMatches = matcher->SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpMatchedMP, 5, 1.0);
 
                         if(numProjOptMatches >= nProjOptMatches)
                         {
@@ -958,10 +956,9 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
     }
 
     Sophus::Sim3f mScw = Converter::toSophus(g2oScw);
-    ORBmatcher matcher(0.9, true);
 
     vpMatchedMapPoints.resize(pCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
-    int num_matches = matcher.SearchByProjection(pCurrentKF, mScw, vpMapPoints, vpMatchedMapPoints, 3, 1.5);
+    int num_matches = matcher->SearchByProjection(pCurrentKF, mScw, vpMapPoints, vpMatchedMapPoints, 3, 1.5);
 
     return num_matches;
 }
@@ -2114,7 +2111,6 @@ void LoopClosing::CheckObservations(set<KeyFrame*> &spKFsMap1, set<KeyFrame*> &s
 
 void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector<MapPoint*> &vpMapPoints)
 {
-    ORBmatcher matcher(0.8);
 
     int total_replaces = 0;
 
@@ -2130,7 +2126,7 @@ void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector
         Sophus::Sim3f Scw = Converter::toSophus(g2oScw);
 
         vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL));
-        int numFused = matcher.Fuse(pKFi,Scw,vpMapPoints,4,vpReplacePoints);
+        int numFused = matcher->Fuse(pKFi,Scw,vpMapPoints,4,vpReplacePoints);
 
         // Get Map Mutex
         unique_lock<mutex> lock(pMap->mMutexMapUpdate);
@@ -2156,7 +2152,6 @@ void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector
 
 void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<MapPoint*> &vpMapPoints)
 {
-    ORBmatcher matcher(0.8);
 
     int total_replaces = 0;
 
@@ -2175,7 +2170,7 @@ void LoopClosing::SearchAndFuse(const vector<KeyFrame*> &vConectedKFs, vector<Ma
             Scw.translation() - Tcw.translation() << std::endl <<
             Scw.scale() - 1.f << std::endl;*/
         vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL));
-        matcher.Fuse(pKF,Scw,vpMapPoints,4,vpReplacePoints);
+        matcher->Fuse(pKF,Scw,vpMapPoints,4,vpReplacePoints);
 
         // Get Map Mutex
         unique_lock<mutex> lock(pMap->mMutexMapUpdate);

@@ -71,7 +71,7 @@ namespace ORB_SLAM3 {
         GeometricCamera* camera2() {return calibration2_;}
         cv::Mat camera1DistortionCoef() {return cv::Mat(vPinHoleDistorsion1_.size(),1,CV_32F,vPinHoleDistorsion1_.data());}
         cv::Mat camera2DistortionCoef() {return cv::Mat(vPinHoleDistorsion2_.size(),1,CV_32F,vPinHoleDistorsion1_.data());}
-
+        std::string weights(){return weights_dir_;}
         Sophus::SE3f Tlr() {return Tlr_;}
         float bf() {return bf_;}
         float b() {return b_;}
@@ -159,6 +159,7 @@ namespace ORB_SLAM3 {
 
         int sensor_;
         CameraType cameraType_;     //Camera type
+        std::string weights_dir_;
 
         /*
          * Visual stuff

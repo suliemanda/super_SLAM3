@@ -165,6 +165,7 @@ namespace ORB_SLAM3 {
             cout << "\t-Loaded RGB-D calibration" << endl;
         }
 
+
         readORB(fSettings);
         cout << "\t-Loaded ORB settings" << endl;
         readViewer(fSettings);
@@ -173,6 +174,7 @@ namespace ORB_SLAM3 {
         cout << "\t-Loaded Atlas settings" << endl;
         readOtherParameters(fSettings);
         cout << "\t-Loaded misc parameters" << endl;
+        weights_dir_=std::string(fSettings["Weights"]);
 
         if(bNeedToRectify_){
             precomputeRectificationMaps();

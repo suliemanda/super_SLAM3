@@ -123,7 +123,7 @@ namespace ORB_SLAM3
         }
         else //if(pF_HF>0.6)
         {
-            cout << "Initialization from Fundamental" << endl;
+            // cout << "Initialization from Fundamental" << endl;
             return ReconstructF(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated,minParallax,50);
         }
     }

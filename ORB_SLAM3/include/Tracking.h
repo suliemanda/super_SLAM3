@@ -36,6 +36,7 @@
 #include "System.h"
 #include "ImuTypes.h"
 #include "Settings.h"
+#include "SPmatcher.h"
 
 #include "GeometricCamera.h"
 
@@ -354,6 +355,7 @@ protected:
     int initID, lastID;
 
     Sophus::SE3f mTlr;
+    SPmatcher* matcher;
 
     void newParameterLoader(Settings* settings);
 

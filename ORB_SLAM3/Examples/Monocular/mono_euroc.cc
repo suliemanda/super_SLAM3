@@ -90,13 +90,18 @@ int main(int argc, char **argv)
     {
 
         // Main loop
-        cv::Mat im;
+        // cv::Mat im;
         int proccIm = 0;
         for(int ni=0; ni<nImages[seq]; ni++, proccIm++)
         {
 
             // Read image from file
-            im = cv::imread(vstrImageFilenames[seq][ni],cv::IMREAD_UNCHANGED); //,CV_LOAD_IMAGE_UNCHANGED);
+            cv::Mat im = cv::imread(vstrImageFilenames[seq][ni],cv::IMREAD_GRAYSCALE); //,CV_LOAD_IMAGE_UNCHANGED);
+            // int cols = im0.cols;
+            // int rows = im0.rows;
+            // auto type=CV_8UC1;
+            // cv::Mat im(rows, cols, type, (unsigned char*)im0.data);
+
             double tframe = vTimestampsCam[seq][ni];
 
             if(im.empty())
@@ -115,9 +120,9 @@ int main(int argc, char **argv)
                 std::chrono::monotonic_clock::time_point t_Start_Resize = std::chrono::monotonic_clock::now();
     #endif
 #endif
-                int width = im.cols * imageScale;
-                int height = im.rows * imageScale;
-                cv::resize(im, im, cv::Size(width, height));
+                // int width = im.cols * imageScale;
+                // int height = im.rows * imageScale;
+                // cv::resize(im, im, cv::Size(width, height));
 #ifdef REGISTER_TIMES
     #ifdef COMPILEDWITHC11
                 std::chrono::steady_clock::time_point t_End_Resize = std::chrono::steady_clock::now();
@@ -164,10 +169,9 @@ int main(int argc, char **argv)
             //std::cout << "T: " << T << std::endl;
             //std::cout << "ttrack: " << ttrack << std::endl;
 
-            // if(ttrack<T) {
-                // std::cout << "usleep: " << (dT-ttrack) << std::endl;
-                // usleep((T-ttrack)*1e6); // 1e6
-            // }
+            if(ttrack<T) {
+                usleep((T-ttrack)*1e6); // 1e6
+            }
         }
 
         if(seq < num_seq - 1)

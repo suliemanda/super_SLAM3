@@ -168,6 +168,8 @@ public:
     int nObs;
 
     // Variables used by the tracking
+    float desc_score;
+
     float mTrackProjX;
     float mTrackProjY;
     float mTrackDepth;
@@ -223,7 +225,6 @@ protected:
 
      // Best descriptor to fast matching
      cv::Mat mDescriptor;
-     float desc_score;
 
      // Reference KeyFrame
      KeyFrame* mpRefKF;

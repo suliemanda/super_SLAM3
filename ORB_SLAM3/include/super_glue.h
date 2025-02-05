@@ -13,11 +13,12 @@
 #include <string>
 
 #include "Thirdparty/TensorRTBuffer/include/buffers.h"
-#include "read_configs.h"
+#include "read_config.h"
 
 using tensorrt_common::TensorRTUniquePtr;
 
-class SuperGlue {
+class SuperGlue
+{
 public:
   explicit SuperGlue(const SuperGlueConfig &superglue_config);
 
@@ -27,12 +28,19 @@ public:
              const Eigen::Matrix<double, 259, Eigen::Dynamic> &features1,
              Eigen::VectorXi &indices0, Eigen::VectorXi &indices1,
              Eigen::VectorXd &mscores0, Eigen::VectorXd &mscores1);
+   int matching_points(
+      const Eigen::Matrix<double, 259, Eigen::Dynamic> &features0,
+      const Eigen::Matrix<double, 259, Eigen::Dynamic> &features1,
+      std::vector<cv::DMatch> &matches, bool outlier_rejection = false);
 
   void save_engine();
 
   bool deserialize_engine();
+  
+
 
 private:
+  // std::mutex* match_mutex;
   SuperGlueConfig superglue_config_;
   std::vector<int> indices0_;
   std::vector<int> indices1_;
@@ -64,6 +72,10 @@ private:
   bool process_output(const tensorrt_buffer::BufferManager &buffers,
                       Eigen::VectorXi &indices0, Eigen::VectorXi &indices1,
                       Eigen::VectorXd &mscores0, Eigen::VectorXd &mscores1, double thresh);
+ 
+  Eigen::Matrix<double, 259, Eigen::Dynamic>
+  NormalizeKeypoints(const Eigen::Matrix<double, 259, Eigen::Dynamic> &features,
+                     int width, int height);
 };
 
 typedef std::shared_ptr<SuperGlue> SuperGluePtr;

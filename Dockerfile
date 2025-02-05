@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tensorrt:24.02-py3
+FROM nvcr.io/nvidia/tensorrt:23.08-py3
 
 
 # install dependencies via apt

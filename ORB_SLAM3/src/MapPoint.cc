@@ -17,7 +17,7 @@
 */
 
 #include "MapPoint.h"
-#include "ORBmatcher.h"
+#include "SPmatcher.h"
 
 #include<mutex>
 
@@ -331,6 +331,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
 {
     // Retrieve all observed descriptors
     vector<cv::Mat> vDescriptors;
+    std::vector<float> Vscores;
 
     map<KeyFrame*,tuple<int,int>> observations;
 
@@ -345,6 +346,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
         return;
 
     vDescriptors.reserve(observations.size());
+    Vscores.reserve(observations.size());
 
     for(map<KeyFrame*,tuple<int,int>>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
@@ -356,9 +358,11 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
             if(leftIndex != -1){
                 vDescriptors.push_back(pKF->mDescriptors.row(leftIndex));
+                Vscores.push_back(pKF->scores.at(leftIndex));
             }
             if(rightIndex != -1){
                 vDescriptors.push_back(pKF->mDescriptors.row(rightIndex));
+                Vscores.push_back(pKF->scores.at(rightIndex));
             }
         }
     }
@@ -369,37 +373,47 @@ void MapPoint::ComputeDistinctiveDescriptors()
     // Compute distances between them
     const size_t N = vDescriptors.size();
 
-    float Distances[N][N];
-    for(size_t i=0;i<N;i++)
-    {
-        Distances[i][i]=0;
-        for(size_t j=i+1;j<N;j++)
-        {
-            int distij = ORBmatcher::DescriptorDistance(vDescriptors[i],vDescriptors[j]);
-            Distances[i][j]=distij;
-            Distances[j][i]=distij;
-        }
-    }
+    // float Distances[N][N];
+    // for(size_t i=0;i<N;i++)
+    // {
+        // Distances[i][i]=0;
+        // for(size_t j=i+1;j<N;j++)
+        // {
+            // float distij = SPmatcher::DescriptorDistance(vDescriptors[i],vDescriptors[j]);
+            // Distances[i][j]=distij;
+            // Distances[j][i]=distij;
+        // }
+    // }
 
     // Take the descriptor with least median distance to the rest
     int BestMedian = INT_MAX;
     int BestIdx = 0;
+    float max_score=0;
     for(size_t i=0;i<N;i++)
     {
-        vector<int> vDists(Distances[i],Distances[i]+N);
-        sort(vDists.begin(),vDists.end());
-        int median = vDists[0.5*(N-1)];
+        // vector<int> vDists(Distances[i],Distances[i]+N);
+        // vector<float> sorted_scores=Vscores.clone();
+        if (Vscores.at(i)>max_score){
+            BestIdx=i;
+            max_score=Vscores.at(i);
 
-        if(median<BestMedian)
-        {
-            BestMedian = median;
-            BestIdx = i;
-        }
+            }
+
+        
+        // sort(sorted_scores.begin(),sorted_scores.end());
+        // int median = sorted_scores[0.5*(N-1)];
+// 
+        // if(median<BestMedian)
+        // {
+            // BestMedian = median;
+            // BestIdx = i;
+        // }
     }
 
     {
         unique_lock<mutex> lock(mMutexFeatures);
         mDescriptor = vDescriptors[BestIdx].clone();
+        desc_score=max_score;
     }
 }
 

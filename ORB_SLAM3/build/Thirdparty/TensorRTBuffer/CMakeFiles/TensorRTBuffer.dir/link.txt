@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC  -Wall   -O3 -std=c++11 -O3 -DNDEBUG -march=native -shared -Wl,-soname,libTensorRTBuffer.so -o /workspace/ORB_SLAM3/lib/libTensorRTBuffer.so CMakeFiles/TensorRTBuffer.dir/src/logger.cpp.o 

@@ -65,37 +65,37 @@ bool SuperGlue::build() {
   profile->setDimensions(superglue_config_.input_tensor_names[0].c_str(),
                          OptProfileSelector::kOPT, Dims3(1, 512, 2));
   profile->setDimensions(superglue_config_.input_tensor_names[0].c_str(),
-                         OptProfileSelector::kMAX, Dims3(1, 1024, 2));
+                         OptProfileSelector::kMAX, Dims3(1, 2048, 2));
   profile->setDimensions(superglue_config_.input_tensor_names[1].c_str(),
                          OptProfileSelector::kMIN, Dims2(1, 1));
   profile->setDimensions(superglue_config_.input_tensor_names[1].c_str(),
                          OptProfileSelector::kOPT, Dims2(1, 512));
   profile->setDimensions(superglue_config_.input_tensor_names[1].c_str(),
-                         OptProfileSelector::kMAX, Dims2(1, 1024));
+                         OptProfileSelector::kMAX, Dims2(1, 2048));
   profile->setDimensions(superglue_config_.input_tensor_names[2].c_str(),
                          OptProfileSelector::kMIN, Dims3(1, 256, 1));
   profile->setDimensions(superglue_config_.input_tensor_names[2].c_str(),
                          OptProfileSelector::kOPT, Dims3(1, 256, 512));
   profile->setDimensions(superglue_config_.input_tensor_names[2].c_str(),
-                         OptProfileSelector::kMAX, Dims3(1, 256, 1024));
+                         OptProfileSelector::kMAX, Dims3(1, 256, 2048));
   profile->setDimensions(superglue_config_.input_tensor_names[3].c_str(),
                          OptProfileSelector::kMIN, Dims3(1, 1, 2));
   profile->setDimensions(superglue_config_.input_tensor_names[3].c_str(),
                          OptProfileSelector::kOPT, Dims3(1, 512, 2));
   profile->setDimensions(superglue_config_.input_tensor_names[3].c_str(),
-                         OptProfileSelector::kMAX, Dims3(1, 1024, 2));
+                         OptProfileSelector::kMAX, Dims3(1, 2048, 2));
   profile->setDimensions(superglue_config_.input_tensor_names[4].c_str(),
                          OptProfileSelector::kMIN, Dims2(1, 1));
   profile->setDimensions(superglue_config_.input_tensor_names[4].c_str(),
                          OptProfileSelector::kOPT, Dims2(1, 512));
   profile->setDimensions(superglue_config_.input_tensor_names[4].c_str(),
-                         OptProfileSelector::kMAX, Dims2(1, 1024));
+                         OptProfileSelector::kMAX, Dims2(1, 2048));
   profile->setDimensions(superglue_config_.input_tensor_names[5].c_str(),
                          OptProfileSelector::kMIN, Dims3(1, 256, 1));
   profile->setDimensions(superglue_config_.input_tensor_names[5].c_str(),
                          OptProfileSelector::kOPT, Dims3(1, 256, 512));
   profile->setDimensions(superglue_config_.input_tensor_names[5].c_str(),
-                         OptProfileSelector::kMAX, Dims3(1, 256, 1024));
+                         OptProfileSelector::kMAX, Dims3(1, 256, 2048));
   config->addOptimizationProfile(profile);
   std::cout << "SuperGlue building: Pos 7" << std::endl;
   auto constructed = construct_network(builder, network, config, parser);
@@ -158,7 +158,9 @@ bool SuperGlue::construct_network(
     return false;
   }
   config->setMaxWorkspaceSize(512_MiB);
-  config->setFlag(BuilderFlag::kFP16);
+  // config->setFlag(BuilderFlag::kFP16);
+  config->clearFlag(BuilderFlag::kFP16);
+  config->clearFlag(BuilderFlag::kINT8);
   enableDLA(builder.get(), config.get(), superglue_config_.dla_core);
   return true;
 }
@@ -177,6 +179,8 @@ bool SuperGlue::infer(
       return false;
     }
   }
+
+            
 
   assert(engine_->getNbBindings() == 7);
 
@@ -215,28 +219,27 @@ bool SuperGlue::infer(
   output_scores_dims_ = context_->getBindingDimensions(output_score_index);
 
   BufferManager buffers(engine_, 0, context_.get());
-
   ASSERT(superglue_config_.input_tensor_names.size() == 6);
   if (!process_input(buffers, features0, features1)) {
     std::cout << "process_input is bad" << std::endl;
     return false;
   }
 
-  buffers.copyInputToDevice();
 
+  buffers.copyInputToDevice();
   bool status = context_->executeV2(buffers.getDeviceBindings().data());
   if (!status) {
     std::cout << "status is bad" << std::endl;
     return false;
   }
+
   buffers.copyOutputToHost();
 
   // Verify results
-  if (!process_output(buffers, indices0, indices1, mscores0, mscores1, superglue_config_.matching_threshold)) {
-    std::cout << "process output is bad is bad" << std::endl;
+  if (!process_output(buffers, indices0, indices1, mscores0, mscores1, 0.1)) {
     return false;
   }
-
+  
   return true;
 }
 
@@ -503,12 +506,14 @@ bool SuperGlue::process_output(const BufferManager &buffers,
                                Eigen::VectorXd &mscores0,
                                Eigen::VectorXd &mscores1,
                                double thresh) {
+
   indices0_.clear();
   indices1_.clear();
   mscores0_.clear();
   mscores1_.clear();
   auto *output_score = static_cast<float *>(
       buffers.getHostBuffer(superglue_config_.output_tensor_names[0]));
+  
   int scores_map_h = output_scores_dims_.d[1];
   int scores_map_w = output_scores_dims_.d[2];
   // auto *scores = new float[(scores_map_h + 1) * (scores_map_w + 1)];
@@ -571,4 +576,81 @@ bool SuperGlue::deserialize_engine() {
     return true;
   }
   return false;
+}
+int SuperGlue::matching_points(
+    const Eigen::Matrix<double, 259, Eigen::Dynamic> &features0,
+    const Eigen::Matrix<double, 259, Eigen::Dynamic> &features1,
+    std::vector<cv::DMatch> &matches, bool outlier_rejection) {
+    // this->match_mutex->lock();
+  matches.clear();
+  Eigen::Matrix<double, 259, Eigen::Dynamic> norm_features0 =
+      NormalizeKeypoints(features0, superglue_config_.image_width,
+                         superglue_config_.image_height);
+  Eigen::Matrix<double, 259, Eigen::Dynamic> norm_features1 =
+      NormalizeKeypoints(features1, superglue_config_.image_width,
+                         superglue_config_.image_height);
+  Eigen::VectorXi indices0, indices1;
+  Eigen::VectorXd mscores0, mscores1;
+  // std::cout<<"infer"<<std::endl;
+  // std::cout<<"features0: "<<features0.rows()<<" "<<features0.cols()<<std::endl;
+  // std::cout<<"features1: "<<features1.rows()<<" "<<features1.cols()<<std::endl;
+  
+auto time_start = std::chrono::high_resolution_clock::now();
+  infer(norm_features0, norm_features1, indices0, indices1, mscores0,
+                  mscores1);
+
+  auto time_end = std::chrono::high_resolution_clock::now();
+  // std::cout << "Inference time: "
+            // << std::chrono::duration_cast<std::chrono::milliseconds>(time_end -
+                                                                    // time_start)
+                  //  .count()
+            // << "ms" << std::endl;
+
+  int num_match = 0;
+  std::vector<cv::Point2f> points0, points1;
+  std::vector<int> point_indexes;
+  for (size_t i = 0; i < indices0.size(); i++) {
+    if (indices0(i) < indices1.size() && indices0(i) >= 0 &&
+        indices1(indices0(i)) == i) {
+      double d = 1.0 - (mscores0[i] + mscores1[indices0[i]]) / 2.0;
+      matches.emplace_back(i, indices0[i], d);
+      if (outlier_rejection) {
+        points0.emplace_back(features0(1, i), features0(2, i));
+        points1.emplace_back(features1(1, indices0(i)),
+                             features1(2, indices0(i)));
+      }
+      num_match++;
+    }
+  }
+
+  // reject outliers
+  if (outlier_rejection && num_match > 0) {
+    std::vector<uchar> inliers;
+    cv::findFundamentalMat(points0, points1, cv::FM_RANSAC, 3, 0.99, inliers);
+    int j = 0;
+    for (int i = 0; i < matches.size(); i++) {
+      if (inliers[i]) {
+        matches[j++] = matches[i];
+      }
+    }
+    matches.resize(j);
+  }
+  // this->match_mutex->unlock();
+
+  return matches.size();
+}
+
+Eigen::Matrix<double, 259, Eigen::Dynamic> SuperGlue::NormalizeKeypoints(
+    const Eigen::Matrix<double, 259, Eigen::Dynamic> &features, int width,
+    int height) {
+  Eigen::Matrix<double, 259, Eigen::Dynamic> norm_features;
+  norm_features.resize(259, features.cols());
+  norm_features = features;
+  for (int col = 0; col < features.cols(); ++col) {
+    norm_features(1, col) =
+        (features(1, col) - width / 2) / (std::max(width, height) * 0.7);
+    norm_features(2, col) =
+        (features(2, col) - height / 2) / (std::max(width, height) * 0.7);
+  }
+  return norm_features;
 }

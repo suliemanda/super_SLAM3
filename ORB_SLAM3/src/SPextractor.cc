@@ -75,18 +75,18 @@ namespace ORB_SLAM3
     const float factorPI = (float)(CV_PI / 180.f);
 
     SPextractor::SPextractor(int _nfeatures, float _scaleFactor, int _nlevels,
-                             int _iniThFAST, int _minThFAST) : nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
+                             int _iniThFAST, int _minThFAST,std::string dir) : nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
                                                                iniThFAST(_iniThFAST), minThFAST(_minThFAST)
     {
         SuperPointConfig super_point_config;
-        super_point_config.keypoint_threshold = _iniThFAST * 1e-3;
-        super_point_config.engine_file = "weights/superpoint_v1_sim_int32.engine";
-        super_point_config.onnx_file = "weights/superpoint_v1_sim_int32.onnx";
+        super_point_config.keypoint_threshold =_iniThFAST * 1e-4;
+        super_point_config.engine_file = dir+"superpoint_v1.engine";
+        super_point_config.onnx_file = dir+"superpoint_v1.onnx";
         super_point_config.max_keypoints = _nfeatures;
         super_point_config.input_tensor_names = {"input"};
         super_point_config.output_tensor_names = {"scores", "descriptors"};
         super_point_config.dla_core = -1;
-        super_point_config.remove_borders = 20;
+        super_point_config.remove_borders = 5;
         SPmodel = std::make_shared<SuperPoint>(SuperPoint(super_point_config));
         if (!SPmodel->build())
         {
@@ -220,50 +220,52 @@ namespace ORB_SLAM3
         assert(image.type() == CV_8UC1);
         Mat mask = _mask.getMat();
         vector<KeyPoint> keypoints;
-        SPmodel->infer(image, mask, keypoints, _descriptors,scores);
+        SPmodel->infer(image, mask, _keypoints, _descriptors,scores);
+        
+
         // SPmodel->visualization("superpoint", image);
-        Mat descriptors;
-        int nkeypoints = 0;
-        nkeypoints = (int)keypoints.size();
-
-        if (nkeypoints == 0)
-            _descriptors.release();
-        else
-        {
-            descriptors = _descriptors.getMat();
-        }
-        _keypoints.clear();
-        _keypoints.reserve(nkeypoints);
-        _keypoints = vector<cv::KeyPoint>(nkeypoints, KeyPoint());
-
+        // Mat descriptors;
+        // int nkeypoints = 0;
+        // nkeypoints = (int)keypoints.size();
+// 
+        // if (nkeypoints == 0)
+            // _descriptors.release();
+        // else
+        // {
+            // descriptors = _descriptors.getMat();
+        // }
+        // _keypoints.clear();
+        // _keypoints.reserve(nkeypoints);
+        // _keypoints = vector<cv::KeyPoint>(nkeypoints, KeyPoint());
+// 
         // Modified for speeding up stereo fisheye matching
-        int monoIndex = 0, stereoIndex = nkeypoints - 1;
-        int nkeypointsLevel = (int)keypoints.size();
-        Mat desc;
-        descriptors.copyTo(desc);
-        float scale = mvScaleFactor[0];
-        int i = 0;
-        for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
-                                        keypointEnd = keypoints.end();
-             keypoint != keypointEnd; ++keypoint)
-        {
+        // int monoIndex = 0, stereoIndex = nkeypoints - 1;
+        // int nkeypointsLevel = (int)keypoints.size();
+        // Mat desc;
+        // descriptors.copyTo(desc);
+        // float scale = mvScaleFactor[0];
+        // int i = 0;
+        // for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+                                        // keypointEnd = keypoints.end();
+            //  keypoint != keypointEnd; ++keypoint)
+        // {
+// 
+            // if (keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1])
+            // {
 
-            if (keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1])
-            {
-
-                _keypoints.at(stereoIndex) = (*keypoint);
-                desc.row(i).copyTo(descriptors.row(stereoIndex));
-                stereoIndex--;
-            }
-            else
-            {
-                _keypoints.at(monoIndex) = (*keypoint);
-                desc.row(i).copyTo(descriptors.row(monoIndex));
-                monoIndex++;
-            }
-            i++;
-        }
-        return monoIndex;
+                // _keypoints.at(stereoIndex) = (*keypoint);
+                // desc.row(i).copyTo(descriptors.row(stereoIndex));
+                // stereoIndex--;
+            // }
+            // else
+            // {
+                // _keypoints.at(monoIndex) = (*keypoint);
+                // desc.row(i).copyTo(descriptors.row(monoIndex));
+                // monoIndex++;
+            // }
+            // i++;
+        // }
+        return _keypoints.size();
     }
 
 } // namespace ORB_SLAM
